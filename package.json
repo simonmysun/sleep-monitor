@@ -1,0 +1,18 @@
+{
+  "name": "sleep-monitor",
+  "main": "index.js",
+  "scripts": {
+    "build": "swc ./src/main.ts -o ./dist/main.bundle.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "swc ./src/main.ts -o ./dist/main.bundle.js --watch"
+  },
+  "dependencies": {
+    "@types/ical": "^0.8.3",
+    "ical": "^0.8.0"
+  },
+  "devDependencies": {
+    "@swc/cli": "^0.3.12",
+    "@swc/core": "^1.5.5",
+    "chokidar": "^3.6.0"
+  }
+}
