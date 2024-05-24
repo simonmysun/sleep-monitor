@@ -2,7 +2,7 @@ services:
   sleep-monitor:
     build: .
     environment:
-      - ICAL='https://calendar.google.com/calendar/ical/.../.../basic.ics'
+      - ICAL_URL='https://calendar.google.com/calendar/ical/.../.../basic.ics'
       - EVENT_NAME='Slept'
     expose:
       - 3000
