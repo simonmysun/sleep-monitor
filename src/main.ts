@@ -54,6 +54,8 @@ const requestListener: http.RequestListener = (req: http.IncomingMessage, res: h
       let lastWakeUp: Timestamp;
       let startDate: Date = new Date();
       const endDate: Date = new Date();
+      let estimatedTiredness = 0;
+
       res.writeHead(200, { 'Content-Type': 'text/plain' });
 
       let result = '';
@@ -64,16 +66,22 @@ const requestListener: http.RequestListener = (req: http.IncomingMessage, res: h
       result += `Woke up ${lastWakeUpHours.toFixed(2)}h ago\n`;
       const awakeRatio24H = totalDuration / 1000 / 60 / 60 / 24 / 1;
       result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio24H * 100).toFixed(2)}%)\n`;
+      estimatedTiredness += awakeRatio24H * 7;
 
       startDate = new Date(Number(endDate) - 1000 * 60 * 60 * 24 * 3);
       ({ totalDuration } = processCalendar(events, options.eventName, startDate, endDate));
       const awakeRatio72H = totalDuration / 1000 / 60 / 60 / 24 / 3;
       result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio72H * 100).toFixed(2)}%)\n`;
+      estimatedTiredness += awakeRatio72H * 3;
 
       startDate = new Date(Number(endDate) - 1000 * 60 * 60 * 24 * 7);
       ({ totalDuration } = processCalendar(events, options.eventName, startDate, endDate));
       const awakeRatio168H = totalDuration / 1000 / 60 / 60 / 24 / 7;
       result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio168H * 100).toFixed(2)}%)\n`;
+      estimatedTiredness += awakeRatio168H * 1;
+
+      result += `Estimated next sleep: ${((estimatedTiredness / 11) * 48 - lastWakeUpHours).toFixed(2)}h\n`;
+
       cachedResult.timestamp = Number(Date.now());
       cachedResult.result = result;
       res.end(result);
