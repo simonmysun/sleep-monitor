@@ -80,7 +80,6 @@ const requestListener: http.RequestListener = (req: http.IncomingMessage, res: h
     });
   } else {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    console.log('Cache hit');
     res.end(cachedResult.result);
   }
 };
