@@ -52,24 +52,28 @@ const requestListener: http.RequestListener = (req: http.IncomingMessage, res: h
       const events: FullCalendar = ical.parseICS(data);
       let totalDuration: Duration;
       let lastWakeUp: Timestamp;
-      const startDate: Date = new Date();
-      const endDate: Date = new Date()
+      let startDate: Date = new Date();
+      const endDate: Date = new Date();
       res.writeHead(200, { 'Content-Type': 'text/plain' });
 
       let result = '';
 
-      startDate.setDate(endDate.getDate() - 1);
+      startDate = new Date(Number(endDate) - 1000 * 60 * 60 * 24 * 1);
       ({ totalDuration, lastWakeUp } = processCalendar(events, options.eventName, startDate, endDate));
-      result += `Woke up ${((Date.now() - lastWakeUp) / 1000 / 60 / 60).toFixed(2)}h ago\n`;
-      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(totalDuration / 1000 / 60 / 60 / 24 / 1 * 100).toFixed(2)}%)\n`;
+      const lastWakeUpHours = (Date.now() - lastWakeUp) / 1000 / 60 / 60;
+      result += `Woke up ${lastWakeUpHours.toFixed(2)}h ago\n`;
+      const awakeRatio24H = totalDuration / 1000 / 60 / 60 / 24 / 1;
+      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio24H * 100).toFixed(2)}%)\n`;
 
-      startDate.setDate(endDate.getDate() - 3);
+      startDate = new Date(Number(endDate) - 1000 * 60 * 60 * 24 * 3);
       ({ totalDuration } = processCalendar(events, options.eventName, startDate, endDate));
-      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(totalDuration / 1000 / 60 / 60 / 24 / 3 * 100).toFixed(2)}%)\n`;
+      const awakeRatio72H = totalDuration / 1000 / 60 / 60 / 24 / 3;
+      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio72H * 100).toFixed(2)}%)\n`;
 
-      startDate.setDate(endDate.getDate() - 7);
+      startDate = new Date(Number(endDate) - 1000 * 60 * 60 * 24 * 7);
       ({ totalDuration } = processCalendar(events, options.eventName, startDate, endDate));
-      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(totalDuration / 1000 / 60 / 60 / 24 / 7 * 100).toFixed(2)}%)\n`;
+      const awakeRatio168H = totalDuration / 1000 / 60 / 60 / 24 / 7;
+      result += `Total ${options.eventName} between ${startDate.toISOString()} and ${endDate.toISOString()}: ${(totalDuration / 1000 / 60 / 60).toFixed(2)}h (${(awakeRatio168H * 100).toFixed(2)}%)\n`;
       cachedResult.timestamp = Number(Date.now());
       cachedResult.result = result;
       res.end(result);
