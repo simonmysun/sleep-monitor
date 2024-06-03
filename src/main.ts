@@ -26,6 +26,9 @@ const processCalendar = (events: FullCalendar, eventName: string, startDate: Dat
     if (events.hasOwnProperty(key)) {
       const event: CalendarComponent = events[key]!;
       if (event.summary === eventName) {
+        if (Number(event.start!) > Number(endDate) || Number(event.end!) < Number(startDate)) {
+          continue;
+        }
         const validStartDate = Math.max(Number(event.start!), Number(startDate));
         const validEndDate = Math.min(Number(event.end!), Number(endDate));
         if (validStartDate < validEndDate) {
