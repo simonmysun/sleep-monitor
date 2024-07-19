@@ -1,6 +1,7 @@
 services:
   sleep-monitor:
     build: .
+    init: true
     environment:
       - ICAL_URL='https://calendar.google.com/calendar/ical/.../.../basic.ics'
       - EVENT_NAME='Slept'
