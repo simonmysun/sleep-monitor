@@ -2,8 +2,8 @@
   "name": "sleep-monitor",
   "main": "index.js",
   "scripts": {
-    "build": "swc ./src/main.ts -o ./dist/main.bundle.js",
-    "dev": "node --watch ./dist/main.bundle.js & chokidar 'src/**/*' --command 'npm run build' --initial; wait",
+    "build": "node esbuild.config.js",
+    "dev": "node esbuild.config.js --watch",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
