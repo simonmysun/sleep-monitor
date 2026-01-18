@@ -11,8 +11,8 @@
     "ical": "^0.8.0"
   },
   "devDependencies": {
-    "@swc/cli": "^0.3.12",
-    "@swc/core": "^1.5.5",
-    "chokidar-cli": "^3.0.0"
-  }
+    "@types/node": "^25.0.9",
+    "esbuild": "^0.27.2"
+  },
+  "type": "module"
 }

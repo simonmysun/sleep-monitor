@@ -16,4 +16,4 @@ EXPOSE 3000
 
 ENTRYPOINT [ "node" ]
 
-CMD [ "/app/dist/main.bundle.js" ]
+CMD [ "/app/dist/main.cjs" ]
