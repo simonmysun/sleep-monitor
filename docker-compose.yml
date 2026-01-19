@@ -3,7 +3,11 @@ services:
     build: .
     init: true
     environment:
-      - ICAL_URL='https://calendar.google.com/calendar/ical/.../.../basic.ics'
+      # - ICAL_URL='https://calendar.google.com/calendar/ical/.../.../basic.ics'
+      - ICAL_URL=https://calendar.google.com/calendar/ical/simonmysun%40gmail.com/private-5a93dcba85404fc6bee5b50baea5b4b9/basic.ics
       - EVENT_NAME='Slept'
+      - CACHE_EXPIRATION=300
     expose:
       - 3000
+    ports:
+      - 3001:3000
