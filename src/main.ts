@@ -84,20 +84,6 @@ function selectRecentSleepEvents(
     .sort((a, b) => a.start!.getTime() - b.start!.getTime());
 }
 
-function buildPredictorFromCalendar(
-  events: CalendarComponent[],
-  now = new Date(),
-) {
-  const recent = selectRecentSleepEvents(events, now);
-  const predictor = new SleepPredictor(
-    recent.length > 0 ? recent[0].start! : now,
-  );
-  for (const e of recent) {
-    predictor.updateWithSleep(e);
-  }
-  return predictor;
-}
-
 const requestListener: http.RequestListener = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -115,39 +101,6 @@ const requestListener: http.RequestListener = (
           ical.parseICS(data),
           EVENT_NAME,
         );
-        const predictor = buildPredictorFromCalendar(sleepEvents, new Date());
-        const predictResult = {
-          awake: predictor.predictRemainingAwake(new Date()),
-          curve: predictor.predictSleepPressureCurve(new Date()),
-          params: predictor.getParams(),
-          state: predictor.getDebugState(),
-        };
-
-        result += `=== Sleep Prediction Result (睡眠预测结果) ===\n\n`;
-        result += `Predicted remaining awake time (预测剩余清醒时间):\n`;
-        result += `- P50: ${predictResult.awake.p50.toFixed(2)} h\n`;
-        result += `- P25: ${predictResult.awake.p25.toFixed(2)} h\n`;
-        result += `- P75: ${predictResult.awake.p75.toFixed(2)} h\n`;
-        result += `- Min: ${predictResult.awake.min.toFixed(2)} h\n`;
-        result += `- Max: ${predictResult.awake.max.toFixed(2)} h\n`;
-        result += `- Uncertainty (不确定性): ${(predictResult.awake.uncertainty * 100).toFixed(2)} %\n\n`;
-
-        result += `Predicted sleep pressure curve for next 6 hours (未来6小时睡眠压力曲线预测):\n`;
-        for (const point of predictResult.curve) {
-          result += `- ${point.time.toISOString()}: Risk ${(point.risk * 100).toFixed(2)} %\n`;
-        }
-        result += `\n`;
-
-        result += `Debug state: \n`;
-        result += `Phase (相位): ${((predictResult.state.phase / (Math.PI * 2)) * 100).toFixed(2)} %\n`;
-        result += `Tau (周期): ${predictResult.state.tau.toFixed(2)} h\n`;
-        result += `Debt (睡眠债): ${predictResult.state.debt.toFixed(2)} h\n\n`;
-
-        result += `Debug params: \n`;
-        result += `Fatigue rate: ${predictResult.params.fatigueRate.toFixed(2)} compared to default 0.15\n`;
-        result += `Recovery rate: ${predictResult.params.recoveryRate.toFixed(2)} compared to default 0.8\n`;
-        result += `Phase weight: ${predictResult.params.phaseWeight.toFixed(2)} compared to default 2.0\n`;
-        result += `Debt weight: ${predictResult.params.debtWeight.toFixed(2)} compared to default 1.5\n\n`;
 
         let startDate: Date = new Date();
         const endDate: Date = new Date();
