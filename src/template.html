@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sleep Monitor</title>
+  </head>
+  <body>
+    <pre>Woke up ${oldPrediction.wokeUpHoursAgo.toFixed(2)}h ago
+${oldPrediction.durations
+  .map(
+    (duration) =>
+      `Total duration in last ${duration.rangeInDays}d between ${duration.startIso} and ${duration.endIso}: ${duration.totalSleepHours.toFixed(2)}h (${duration.sleepRatioPercent.toFixed(2)}%)`,
+  )
+  .join("\n")}
+Estimated next sleep: ${oldPrediction.estimatedNextSleepHours.toFixed(2)}h</pre>
+  </body>
+</html>

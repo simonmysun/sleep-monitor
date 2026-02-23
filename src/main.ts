@@ -8,12 +8,15 @@ import {
   CACHE_EXPIRATION,
 } from "./config.ts";
 import type { SleepEvent, Timestamp } from "./types.d.ts";
-import { OldPredictor } from "./oldPredictor.ts";
+import { OldPredictor, type OldPredictionResult } from "./oldPredictor.ts";
+import { Template } from "./template.ts";
 
 const cachedResult: { timestamp: Timestamp; result: string } = {
   timestamp: -Infinity,
   result: "",
 };
+
+const resultTemplate = new Template("src/template.html");
 
 const getSleepEvents = (
   events: FullCalendar,
@@ -42,14 +45,12 @@ const requestListener: http.RequestListener = (
     fetch(ICAL_URL)
       .then((response: Response): Promise<string> => response.text())
       .then((data: string): void => {
-        let result = "";
-
         const sleepEvents: CalendarComponent[] = getSleepEvents(
           ical.parseICS(data),
           EVENT_NAME,
         );
 
-        res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
 
         const oldPredictor = new OldPredictor(
           sleepEvents.map(
@@ -60,11 +61,13 @@ const requestListener: http.RequestListener = (
               }) as SleepEvent,
           ),
         );
-        result += oldPredictor.predict();
+        const prediction = oldPredictor.predict();
+
+        const resultHtml = resultTemplate.render({ oldPrediction: prediction });
 
         cachedResult.timestamp = Number(Date.now());
-        cachedResult.result = result;
-        res.end(result);
+        cachedResult.result = resultHtml;
+        res.end(resultHtml);
       })
       .catch((error) => {
         console.error("Error:", error);
@@ -72,7 +75,7 @@ const requestListener: http.RequestListener = (
         res.end("Internal Server Error");
       });
   } else {
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     res.end(cachedResult.result);
   }
 };
