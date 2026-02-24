@@ -16,10 +16,13 @@ const buildOptions = {
 
 let serverProcess = null;
 
-function startServer() {
+async function startServer() {
   if (serverProcess) {
     console.log("🔄 Restarting server...");
-    serverProcess.kill();
+    await serverProcess.kill();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100); // small delay to ensure the process has exited
+    });
   } else {
     console.log("🚀 Starting server...");
   }
@@ -42,10 +45,10 @@ function startServer() {
   });
 }
 
-function stopServer() {
+async function stopServer() {
   if (serverProcess) {
     console.log("🛑 Stopping server...");
-    serverProcess.kill();
+    await serverProcess.kill();
     serverProcess = null;
   }
 }
@@ -59,10 +62,10 @@ if (isDev) {
       {
         name: "restart-server",
         setup(build) {
-          build.onEnd((result) => {
+          build.onEnd(async (result) => {
             if (result.errors.length === 0) {
               console.log("✅ Build completed");
-              startServer();
+              await startServer();
             } else {
               console.error("❌ Build failed:", result.errors);
             }
@@ -78,15 +81,15 @@ if (isDev) {
   console.log("👀 Watching for changes...");
   console.log("Press Ctrl+C to stop");
 
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     console.log("\n🛑 Shutting down...");
-    stopServer();
+    await stopServer();
     ctx.dispose();
     process.exit(0);
   });
 
-  process.on("SIGTERM", () => {
-    stopServer();
+  process.on("SIGTERM", async () => {
+    await stopServer();
     ctx.dispose();
     process.exit(0);
   });
