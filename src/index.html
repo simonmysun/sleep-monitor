@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sleep Monitor</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #0f0f1a;
+        color: #e0e0e0;
+        padding: 20px;
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      h1 { font-size: 1.8rem; margin-bottom: 20px; color: #8ab4f8; }
+      h2 { font-size: 1.2rem; margin-bottom: 12px; color: #aaa; }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .card {
+        background: #1a1a2e;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #2a2a4a;
+      }
+      .card-label { font-size: 0.85rem; color: #888; margin-bottom: 4px; }
+      .card-value { font-size: 1.5rem; font-weight: 600; }
+      .safe { color: #4ade80; }
+      .warning { color: #fbbf24; }
+      .danger { color: #f87171; }
+      .chart-container {
+        background: #1a1a2e;
+        border-radius: 12px;
+        padding: 20px;
+        border: 1px solid #2a2a4a;
+        margin-bottom: 24px;
+        position: relative;
+        height: 340px;
+      }
+      .chart-container.forecast { height: 260px; }
+      details { margin-top: 24px; }
+      details summary { cursor: pointer; color: #888; font-size: 0.9rem; }
+      details pre { margin-top: 8px; font-size: 0.8rem; color: #666; white-space: pre-wrap; }
+      #loading { text-align: center; margin-top: 80px; color: #888; font-size: 1.2rem; }
+      #content { display: none; }
+      #error { display: none; text-align: center; margin-top: 80px; color: #f87171; }
+    </style>
+  </head>
+  <body>
+    <h1>Sleep Monitor</h1>
+
+    <div id="loading">Loading…</div>
+    <div id="error">Failed to load data. <a href="/" style="color:#8ab4f8">Retry</a></div>
+
+    <div id="content">
+      <div class="grid">
+        <div class="card">
+          <div class="card-label">Woke Up</div>
+          <div class="card-value" id="wokeUp"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Acute Fatigue (A)</div>
+          <div class="card-value" id="acuteFatigue"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Chronic Fatigue (B)</div>
+          <div class="card-value" id="chronicFatigue"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Total Fatigue (F)</div>
+          <div class="card-value" id="totalFatigue"></div>
+        </div>
+        <div class="card">
+          <div class="card-label">Crash Prediction</div>
+          <div class="card-value" id="crashPrediction"></div>
+        </div>
+      </div>
+
+      <div class="chart-container">
+        <h2>Past 7 Days &mdash; Fatigue History</h2>
+        <canvas id="historyChart"></canvas>
+      </div>
+
+      <div class="chart-container forecast">
+        <h2>Next 24 Hours &mdash; Forecast</h2>
+        <canvas id="forecastChart"></canvas>
+      </div>
+
+      <details id="legacyDetails">
+        <summary>Legacy stats (old predictor)</summary>
+        <pre id="legacyPre"></pre>
+      </details>
+    </div>
+
+    <script>
+      var DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+      function getZoneClass(fatigue, threshold) {
+        if (fatigue >= threshold) return "danger";
+        if (fatigue >= threshold * 0.7) return "warning";
+        return "safe";
+      }
+
+      function renderCards(data) {
+        var d = data.prediction;
+        var el;
+
+        el = document.getElementById("wokeUp");
+        el.textContent = d.wokeUpHoursAgo >= 0 ? d.wokeUpHoursAgo.toFixed(1) + "h ago" : "N/A";
+
+        el = document.getElementById("acuteFatigue");
+        el.textContent = d.currentStatus.acuteFatigue.toFixed(2);
+
+        el = document.getElementById("chronicFatigue");
+        el.textContent = d.currentStatus.chronicFatigue.toFixed(2);
+
+        el = document.getElementById("totalFatigue");
+        el.textContent = d.currentStatus.totalFatigue.toFixed(2);
+        el.className = "card-value " + getZoneClass(d.currentStatus.totalFatigue, d.config.threshold);
+
+        el = document.getElementById("crashPrediction");
+        if (d.crashInHours !== null) {
+          el.textContent = d.crashInHours.toFixed(1) + "h";
+          el.className = "card-value danger";
+        } else {
+          el.textContent = "> " + d.forecastHours + "h";
+          el.className = "card-value safe";
+        }
+      }
+
+      function renderLegacy(data) {
+        var old = data.oldPrediction;
+        var lines = ["Woke up " + old.wokeUpHoursAgo.toFixed(2) + "h ago"];
+        old.durations.forEach(function(dur) {
+          lines.push("Total duration in last " + dur.rangeInDays + "d: " +
+            dur.totalSleepHours.toFixed(2) + "h (" + dur.sleepRatioPercent.toFixed(2) + "%)");
+        });
+        lines.push("Estimated next sleep: " + old.estimatedNextSleepHours.toFixed(2) + "h");
+        document.getElementById("legacyPre").textContent = lines.join("\n");
+      }
+
+      function renderHistoryChart(d) {
+        /* ── Find local peaks ── */
+        var peaks = [];
+        var h = d.history;
+        var minPeak = d.config.threshold * 0.5;
+        for (var i = 2; i < h.length - 2; i++) {
+          if (h[i].totalFatigue > h[i - 1].totalFatigue &&
+              h[i].totalFatigue > h[i + 1].totalFatigue &&
+              h[i].totalFatigue > h[i - 2].totalFatigue &&
+              h[i].totalFatigue > h[i + 2].totalFatigue &&
+              h[i].totalFatigue > minPeak) {
+            if (peaks.length === 0 || h[i].time - peaks[peaks.length - 1].x > 3600000) {
+              peaks.push({ x: h[i].time, y: h[i].totalFatigue });
+            }
+          }
+        }
+
+        /* ── Annotations ── */
+        var annotations = {};
+
+        d.sleepEvents.forEach(function(ev, i) {
+          annotations["sleep" + i] = {
+            type: "box",
+            xMin: ev.start,
+            xMax: ev.end,
+            backgroundColor: "rgba(99, 102, 241, 0.15)",
+            borderColor: "rgba(99, 102, 241, 0.3)",
+            borderWidth: 1
+          };
+        });
+
+        peaks.forEach(function(p, i) {
+          annotations["peak" + i] = {
+            type: "point",
+            xValue: p.x,
+            yValue: p.y,
+            backgroundColor: "#f87171",
+            radius: 4,
+            borderColor: "#fff",
+            borderWidth: 1
+          };
+          annotations["peakLabel" + i] = {
+            type: "label",
+            xValue: p.x,
+            yValue: p.y,
+            content: [p.y.toFixed(1)],
+            color: "#f87171",
+            font: { size: 10 },
+            position: { x: "center", y: "start" },
+            yAdjust: -12
+          };
+        });
+
+        annotations["threshold"] = {
+          type: "line",
+          yMin: d.config.threshold,
+          yMax: d.config.threshold,
+          borderColor: "rgba(248, 113, 113, 0.5)",
+          borderWidth: 2,
+          borderDash: [6, 6],
+          label: {
+            display: true,
+            content: "Threshold",
+            position: "start",
+            color: "#f87171",
+            font: { size: 11 }
+          }
+        };
+        annotations["nowLine"] = {
+          type: "line",
+          xMin: d.currentStatus.time,
+          xMax: d.currentStatus.time,
+          borderColor: "rgba(138, 180, 248, 0.4)",
+          borderWidth: 1,
+          borderDash: [4, 4],
+          label: {
+            display: true,
+            content: "Now",
+            position: "start",
+            color: "#8ab4f8",
+            font: { size: 10 }
+          }
+        };
+
+        var ctx = document.getElementById("historyChart");
+        new Chart(ctx, {
+          type: "line",
+          data: {
+            datasets: [
+              {
+                label: "Total Fatigue (F)",
+                data: d.history.map(function(p) { return { x: p.time, y: p.totalFatigue }; }),
+                borderColor: "#8ab4f8",
+                backgroundColor: "rgba(138, 180, 248, 0.08)",
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0,
+                borderWidth: 2
+              },
+              {
+                label: "Acute (A)",
+                data: d.history.map(function(p) { return { x: p.time, y: p.acuteFatigue * (1 - d.config.weightB) }; }),
+                borderColor: "rgba(74, 222, 128, 0.5)",
+                borderWidth: 1,
+                tension: 0.3,
+                pointRadius: 0,
+                borderDash: [4, 4],
+                fill: false
+              },
+              {
+                label: "Chronic (B \u00d7 w)",
+                data: d.history.map(function(p) { return { x: p.time, y: p.chronicFatigue * d.config.weightB }; }),
+                borderColor: "rgba(251, 191, 36, 0.5)",
+                borderWidth: 1,
+                tension: 0.3,
+                pointRadius: 0,
+                borderDash: [4, 4],
+                fill: false
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            devicePixelRatio: DPR,
+            interaction: { mode: "index", intersect: false },
+            scales: {
+              x: {
+                type: "time",
+                time: { unit: "hour", stepSize: 6, displayFormats: { hour: "MM/dd HH:mm" } },
+                grid: { color: "rgba(255,255,255,0.05)" },
+                ticks: { color: "#888", maxRotation: 45 }
+              },
+              y: {
+                grid: { color: "rgba(255,255,255,0.05)" },
+                ticks: { color: "#888" },
+                beginAtZero: true
+              }
+            },
+            plugins: {
+              legend: { labels: { color: "#ccc" } },
+              annotation: { annotations: annotations }
+            }
+          }
+        });
+      }
+
+      function renderForecastChart(d) {
+        var zoneColors = d.forecast.map(function(p) {
+          if (p.zone === "danger") return "#f87171";
+          if (p.zone === "warning") return "#fbbf24";
+          return "#4ade80";
+        });
+
+        var annotations = {
+          threshold: {
+            type: "line",
+            yMin: d.config.threshold,
+            yMax: d.config.threshold,
+            borderColor: "rgba(248, 113, 113, 0.5)",
+            borderWidth: 2,
+            borderDash: [6, 6],
+            label: {
+              display: true,
+              content: "Crash Threshold",
+              position: "start",
+              color: "#f87171",
+              font: { size: 11 }
+            }
+          }
+        };
+
+        if (d.crashPoint) {
+          annotations["crash"] = {
+            type: "point",
+            xValue: d.crashPoint,
+            yValue: d.config.threshold,
+            backgroundColor: "#f87171",
+            radius: 7,
+            borderColor: "#fff",
+            borderWidth: 2
+          };
+          annotations["crashLabel"] = {
+            type: "label",
+            xValue: d.crashPoint,
+            yValue: d.config.threshold,
+            content: ["Crash"],
+            color: "#f87171",
+            font: { size: 11, weight: "bold" },
+            yAdjust: -18
+          };
+        }
+
+        var ctx = document.getElementById("forecastChart");
+        new Chart(ctx, {
+          type: "line",
+          data: {
+            datasets: [{
+              label: "Predicted Fatigue (F)",
+              data: d.forecast.map(function(p) { return { x: p.time, y: p.totalFatigue }; }),
+              borderColor: "#8ab4f8",
+              backgroundColor: "rgba(138, 180, 248, 0.08)",
+              fill: true,
+              tension: 0.3,
+              pointRadius: 0,
+              borderWidth: 2,
+              borderDash: [6, 4],
+              segment: {
+                borderColor: function(ctx) {
+                  return zoneColors[ctx.p0DataIndex] || "#8ab4f8";
+                }
+              }
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            devicePixelRatio: DPR,
+            scales: {
+              x: {
+                type: "time",
+                time: { unit: "hour", stepSize: 2, displayFormats: { hour: "HH:mm" } },
+                grid: { color: "rgba(255,255,255,0.05)" },
+                ticks: { color: "#888" }
+              },
+              y: {
+                grid: { color: "rgba(255,255,255,0.05)" },
+                ticks: { color: "#888" },
+                beginAtZero: true
+              }
+            },
+            plugins: {
+              legend: { labels: { color: "#ccc" } },
+              annotation: { annotations: annotations }
+            }
+          }
+        });
+      }
+
+      /* ── Fetch data and render ── */
+      fetch("/api/data")
+        .then(function(res) {
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return res.json();
+        })
+        .then(function(data) {
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("content").style.display = "block";
+          renderCards(data);
+          renderLegacy(data);
+          renderHistoryChart(data.prediction);
+          renderForecastChart(data.prediction);
+        })
+        .catch(function(err) {
+          console.error("Fetch error:", err);
+          document.getElementById("loading").style.display = "none";
+          document.getElementById("error").style.display = "block";
+        });
+    </script>
+  </body>
+</html>

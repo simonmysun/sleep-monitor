@@ -1,83 +1,105 @@
 import ical, { type CalendarComponent, type FullCalendar } from "ical";
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import {
   PORT,
   HOST,
   ICAL_URL,
   EVENT_NAME,
   CACHE_EXPIRATION,
+  MODEL_CONFIG,
 } from "./config.ts";
 import type { SleepEvent, Timestamp } from "./types.d.ts";
-import { OldPredictor, type OldPredictionResult } from "./oldPredictor.ts";
-import { Template } from "./template.ts";
+import { OldPredictor } from "./oldPredictor.ts";
+import { Predictor } from "./predictor.ts";
 
-const cachedResult: { timestamp: Timestamp; result: string } = {
+const indexHtml = fs.readFileSync(path.resolve("src/index.html"), "utf8");
+
+const cachedData: { timestamp: Timestamp; json: string } = {
   timestamp: -Infinity,
-  result: "",
+  json: "",
 };
 
-const resultTemplate = new Template("src/template.html");
+function buildData(sleepEvents: CalendarComponent[]): string {
+  const sleepEventList: SleepEvent[] = sleepEvents.map(
+    (event) =>
+      ({
+        start: Number(event.start),
+        end: Number(event.end),
+      }) as SleepEvent,
+  );
 
-const getSleepEvents = (
-  events: FullCalendar,
-  eventName: string,
-): CalendarComponent[] => {
-  const sleepEvents: CalendarComponent[] = [];
-  for (const key in events) {
-    if (events.hasOwnProperty(key)) {
-      const event: CalendarComponent = events[key]!;
-      if (event.summary === eventName) {
-        sleepEvents.push(event);
+  const oldPredictor = new OldPredictor(sleepEventList);
+  const oldPrediction = oldPredictor.predict();
+
+  const predictor = new Predictor(sleepEventList, MODEL_CONFIG);
+  const prediction = predictor.predict();
+
+  return JSON.stringify({ prediction, oldPrediction });
+}
+
+function fetchAndCache(): Promise<string> {
+  return fetch(ICAL_URL)
+    .then((response: Response): Promise<string> => response.text())
+    .then((data: string): string => {
+      const events: FullCalendar = ical.parseICS(data);
+      const sleepEvents: CalendarComponent[] = [];
+      for (const key in events) {
+        if (events.hasOwnProperty(key)) {
+          const event: CalendarComponent = events[key]!;
+          if (event.summary === EVENT_NAME) {
+            sleepEvents.push(event);
+          }
+        }
       }
-    }
-  }
-  return sleepEvents;
-};
+      const json = buildData(sleepEvents);
+      cachedData.timestamp = Date.now();
+      cachedData.json = json;
+      return json;
+    });
+}
+
+function isCacheValid(): boolean {
+  return (
+    CACHE_EXPIRATION >= 0 &&
+    cachedData.timestamp + CACHE_EXPIRATION >= Date.now()
+  );
+}
 
 const requestListener: http.RequestListener = (
   req: http.IncomingMessage,
   res: http.ServerResponse,
 ): void => {
-  if (
-    CACHE_EXPIRATION < 0 ||
-    cachedResult.timestamp + CACHE_EXPIRATION < Number(Date.now())
-  ) {
-    fetch(ICAL_URL)
-      .then((response: Response): Promise<string> => response.text())
-      .then((data: string): void => {
-        const sleepEvents: CalendarComponent[] = getSleepEvents(
-          ical.parseICS(data),
-          EVENT_NAME,
-        );
+  const url = req.url || "/";
 
-        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  if (url === "/api/data") {
+    if (isCacheValid()) {
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+      });
+      res.end(cachedData.json);
+      return;
+    }
 
-        const oldPredictor = new OldPredictor(
-          sleepEvents.map(
-            (event) =>
-              ({
-                start: Number(event.start),
-                end: Number(event.end),
-              }) as SleepEvent,
-          ),
-        );
-        const prediction = oldPredictor.predict();
-
-        const resultHtml = resultTemplate.render({ oldPrediction: prediction });
-
-        cachedResult.timestamp = Number(Date.now());
-        cachedResult.result = resultHtml;
-        res.end(resultHtml);
+    fetchAndCache()
+      .then((json) => {
+        res.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+        });
+        res.end(json);
       })
       .catch((error) => {
         console.error("Error:", error);
-        res.writeHead(500);
-        res.end("Internal Server Error");
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Internal Server Error" }));
       });
-  } else {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    res.end(cachedResult.result);
+    return;
   }
+
+  // Serve static HTML for everything else
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  res.end(indexHtml);
 };
 
 http.createServer(requestListener).listen(PORT, HOST, () => {
