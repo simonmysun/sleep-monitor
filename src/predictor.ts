@@ -167,12 +167,12 @@ export class Predictor {
 
   /**
    * Full fatigue status at a given time.
-   *   F(t) = (1 - w) · A(t) + w · B(t)
+   *   F(t) = A(t) + w · B(t)
    */
   calculateCurrentStatus(time: number): FatigueStatus {
     const A = this.calculateAcuteFatigue(time);
     const B = this.calculateChronicFatigue(time);
-    const F = (1 - this.config.weightB) * A + this.config.weightB * B;
+    const F = A + this.config.weightB * B;
     return { time, acuteFatigue: A, chronicFatigue: B, totalFatigue: F };
   }
 
@@ -213,7 +213,7 @@ export class Predictor {
         B = B * decay + ((eta * (A + c)) / lambdaB) * (1 - decay);
       }
 
-      const F = (1 - weightB) * A + weightB * B;
+      const F = A + weightB * B;
       points.push({ time: t, totalFatigue: F, zone: this.getZone(F) });
 
       if (crashPoint === null && F >= threshold) {
@@ -279,7 +279,7 @@ export class Predictor {
       }
 
       if (t >= historyStart) {
-        const F = (1 - weightB) * A + weightB * B;
+        const F = A + weightB * B;
         points.push({
           time: t,
           acuteFatigue: A,
@@ -329,8 +329,7 @@ export class Predictor {
 
     // 2. Current status using B(now) from history
     const Anow = this.calculateAcuteFatigue(now);
-    const Fnow =
-      (1 - this.config.weightB) * Anow + this.config.weightB * bAtEnd;
+    const Fnow = Anow + this.config.weightB * bAtEnd;
     const currentStatus: FatigueStatus = {
       time: now,
       acuteFatigue: Anow,

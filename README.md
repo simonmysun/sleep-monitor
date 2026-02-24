@@ -46,7 +46,7 @@ Because $B$ integrates $A$ over time, it **lags** behind $A$ — even after a na
 
 ### 3. Total Fatigue — $F(t)$
 
-$$F(t) = (1 - w) \cdot A(t) + w \cdot B(t)$$
+$$F(t) = A(t) + w \cdot B(t)$$
 
 | Symbol | Meaning | Default |
 |---|---|---|

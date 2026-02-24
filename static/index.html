@@ -248,7 +248,7 @@
               },
               {
                 label: "Acute (A)",
-                data: d.history.map(function(p) { return { x: p.time, y: p.acuteFatigue * (1 - d.config.weightB) }; }),
+                data: d.history.map(function(p) { return { x: p.time, y: p.acuteFatigue }; }),
                 borderColor: "rgba(74, 222, 128, 0.5)",
                 borderWidth: 1,
                 tension: 0.3,
