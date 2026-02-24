@@ -14,7 +14,44 @@ import type { SleepEvent, Timestamp } from "./types.d.ts";
 import { OldPredictor } from "./oldPredictor.ts";
 import { Predictor } from "./predictor.ts";
 
-const indexHtml = fs.readFileSync(path.resolve("src/index.html"), "utf8");
+const STATIC_DIR = path.resolve("static");
+
+const MIME_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+};
+
+const staticCache = new Map<string, { content: Buffer; mime: string }>();
+
+function serveStatic(
+  filePath: string,
+): { content: Buffer; mime: string } | null {
+  const cached = staticCache.get(filePath);
+  if (cached) {
+    return cached;
+  }
+  const fullPath = path.join(STATIC_DIR, filePath);
+  const resolved = path.resolve(fullPath);
+  if (!resolved.startsWith(STATIC_DIR)) {
+    return null;
+  }
+  try {
+    const content = fs.readFileSync(resolved);
+    const ext = path.extname(resolved);
+    const mime = MIME_TYPES[ext] || "application/octet-stream";
+    const entry = { content, mime };
+    staticCache.set(filePath, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
 
 const cachedData: { timestamp: Timestamp; json: string } = {
   timestamp: -Infinity,
@@ -97,9 +134,17 @@ const requestListener: http.RequestListener = (
     return;
   }
 
-  // Serve static HTML for everything else
-  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-  res.end(indexHtml);
+  // Serve static files
+  const filePath = url === "/" ? "/index.html" : url;
+  const file = serveStatic(filePath);
+  if (file) {
+    res.writeHead(200, { "Content-Type": file.mime });
+    res.end(file.content);
+    return;
+  }
+
+  res.writeHead(302, { Location: "/" });
+  res.end();
 };
 
 http.createServer(requestListener).listen(PORT, HOST, () => {
