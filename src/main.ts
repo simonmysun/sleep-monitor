@@ -90,6 +90,9 @@ function fetchAndCache(): Promise<string> {
           }
         }
       }
+      console.log(
+        `Fetched ${sleepEvents.length} / ${Object.keys(events).length} events.`,
+      );
       const json = buildData(sleepEvents);
       cachedData.timestamp = Date.now();
       cachedData.json = json;
