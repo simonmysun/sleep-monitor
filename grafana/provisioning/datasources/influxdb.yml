@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: Sleep InfluxDB
+    uid: sleep-influxdb
+    type: influxdb
+    access: proxy
+    url: $INFLUXDB_URL
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: $INFLUXDB_ORG
+      defaultBucket: $INFLUXDB_BUCKET
+    secureJsonData:
+      token: $INFLUXDB_TOKEN

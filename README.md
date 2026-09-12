@@ -118,6 +118,90 @@ npm run dev             # build + watch + auto-restart
 docker compose up --build
 ```
 
+## InfluxDB and Grafana
+
+The repository includes a development data stack and an importer for calendar,
+Home Assistant, and ActivityWatch data. Credentials are read from `.env`; real
+tokens must not be committed.
+
+### Start the development stack
+
+Copy the data-related settings from `.env.example` into `.env`, choose a long
+`INFLUXDB_TOKEN`, then start the `dev` profile:
+
+```bash
+docker compose --profile dev up -d influxdb grafana
+```
+
+- InfluxDB: <http://localhost:8086>
+- Grafana: <http://localhost:3000>
+- Provisioned dashboard: **Sleep Monitor / Sleep and Activity Overview**
+
+InfluxDB initialization settings only apply to a new `influxdb-data` volume.
+The token in `.env` must continue to match the initialized token unless the dev
+volume is deliberately recreated.
+
+### Configure data sources
+
+The importer loads `.env` automatically. Important settings are:
+
+| Variable | Purpose |
+|---|---|
+| `INFLUXDB_VERSION` | `2` for the local dev stack; `1` for an InfluxDB 1.x server |
+| `INFLUXDB_URL` | InfluxDB base URL |
+| `INFLUXDB_ORG`, `INFLUXDB_BUCKET`, `INFLUXDB_TOKEN` | InfluxDB 2.x destination and token |
+| `INFLUXDB_DATABASE`, `INFLUXDB_USERNAME`, `INFLUXDB_PASSWORD` | InfluxDB 1.x destination and credentials |
+| `IMPORT_START`, `IMPORT_END` | Shared import range; defaults to the last 30 days |
+| `ICS_SOURCES` | Comma-separated ICS file paths or HTTP(S) URLs |
+| `ICS_TITLE_PATTERN` | Optional case-insensitive event-title regular expression |
+| `HA_URL`, `HA_TOKEN` | Home Assistant base URL and long-lived access token |
+| `HA_ENTITY_IDS` | Comma-separated entity IDs whose history should be imported |
+| `HA_CHUNK_DAYS` | HA history request chunk size, default `7` days |
+| `AW_EXPORT_PATH` | ActivityWatch bucket export JSON path |
+| `AW_MERGE_GAP_SECONDS` | Merge gap for adjacent identical activity, default `5` seconds |
+| `AW_MIN_DURATION_SECONDS` | Discard shorter non-instant activity fragments, default `0.5` seconds |
+
+The provided Home Assistant token belongs in local `.env` as `HA_TOKEN`. Entity
+IDs can be copied from Home Assistant's Developer Tools > States page. Do not
+put the token directly in scripts or Compose YAML.
+
+The production Home Assistant streams all state changes directly to the
+`home_assistant` InfluxDB database. Keep the HA importer unconfigured for normal
+one-command imports; it remains available for API-based backfills or other Home
+Assistant instances.
+
+### Import data
+
+```bash
+# One-command import for every configured source. Unconfigured sources are skipped.
+npm run import
+
+# Or import one source and fail if its settings are incomplete.
+npm run import -- ics
+npm run import -- ha
+npm run import -- activitywatch
+```
+
+Measurements written to the configured bucket:
+
+| Measurement | Contents |
+|---|---|
+| `calendar_event` | Title, start/end, duration, location, and UID |
+| `home_assistant_state` | Entity state, numeric value when available, and timestamps |
+| `activity_event` | Smoothed activity intervals, app/domain, duration, and original data JSON |
+
+Imports are idempotent because each point uses stable source tags and its
+original timestamp. ActivityWatch imports additionally remove exact duplicate
+events, retain unlocks as instantaneous events, discard tiny non-instant
+fragments, and merge adjacent identical activities. Since ActivityWatch exports
+cannot be range-limited, the importer applies `IMPORT_START` and `IMPORT_END`
+while reading the export.
+
+The dashboard's **Sleep title regex** defaults to English sleep/nap titles. Edit
+it in Grafana if calendar events use another naming convention. If
+`INFLUXDB_BUCKET` is not `sleep`, update the hidden dashboard constant after
+opening dashboard settings > Variables.
+
 ## Tuning guide
 
 1. **Start with $A$ only** (`WEIGHT_B=0`). Adjust `K_UP`, `K_DOWN`, and `LAMBDA_A` until the $A$ peaks in the history chart align with your actual sleep-onset times.

@@ -8,3 +8,48 @@ services:
       - 3000
     ports:
       - 3001:3000
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    profiles: [dev]
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD:-sleep-monitor-dev}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-sleep-monitor}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-sleep}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-sleep-monitor-development-token-change-me}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    healthcheck:
+      test: [CMD, influx, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    profiles: [dev]
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-sleep-monitor}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-sleep}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-sleep-monitor-development-token-change-me}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  influxdb-data:
+  grafana-data:

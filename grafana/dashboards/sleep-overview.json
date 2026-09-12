@@ -1,0 +1,96 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "decimals": 1, "unit": "h" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto", "wideLayout": true },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: -24h)\n  |> filter(fn: (r) => r._measurement == \"calendar_event\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.title =~ /${sleep_pattern:raw}/)\n  |> group()\n  |> map(fn: (r) => ({r with _value: float(v: r.duration_seconds) / 3600.0}))\n  |> sum()", "refId": "A" }],
+      "title": "Sleep in last 24 hours",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "decimals": 1, "unit": "h" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 9, "x": 6, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"calendar_event\")\n  |> pivot(rowKey: [\"_time\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> filter(fn: (r) => r.title =~ /${sleep_pattern:raw}/)\n  |> group()\n  |> map(fn: (r) => ({_time: r._time, _value: float(v: r.duration_seconds) / 3600.0}))\n  |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)", "refId": "A" }],
+      "title": "Daily recorded sleep",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 5, "w": 9, "x": 15, "y": 0 },
+      "id": 3,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"home_assistant_state\" and r._field == \"numeric_value\")\n  |> filter(fn: (r) => r.entity_id =~ /^${ha_entity:regex}$/)\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)", "refId": "A" }],
+      "title": "Home Assistant sensors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": {}, "overrides": [{ "matcher": { "id": "byName", "options": "duration_seconds" }, "properties": [{ "id": "unit", "value": "s" }] }] },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "id": 4,
+      "options": { "cellHeight": "sm", "showHeader": true },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"calendar_event\")\n  |> pivot(rowKey: [\"_time\", \"calendar\"], columnKey: [\"_field\"], valueColumn: \"_value\")\n  |> keep(columns: [\"_time\", \"title\", \"end_time\", \"duration_seconds\", \"location\"])\n  |> sort(columns: [\"_time\"], desc: true)", "refId": "A" }],
+      "title": "Calendar events",
+      "transformations": [{ "id": "organize", "options": { "renameByName": { "_time": "Start", "duration_seconds": "Duration", "end_time": "End", "location": "Location", "title": "Title" } } }],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "unit": "h" }, "overrides": [] },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "id": 5,
+      "options": { "barRadius": 0, "barWidth": 0.8, "fullHighlight": false, "groupWidth": 0.7, "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true }, "orientation": "auto", "showValue": "never", "stacking": "normal", "tooltip": { "mode": "multi", "sort": "desc" }, "xTickLabelRotation": 0, "xTickLabelSpacing": 0 },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"activity_event\" and r._field == \"duration_seconds\")\n  |> filter(fn: (r) => r.app != \"\")\n  |> map(fn: (r) => ({r with _value: float(v: r._value) / 3600.0}))\n  |> aggregateWindow(every: 1d, fn: sum, createEmpty: false)", "refId": "A" }],
+      "title": "Daily app activity",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 14 },
+      "id": 6,
+      "options": { "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": false }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"activity_event\" and r.bucket_type == \"os.lockscreen.unlocks\" and r._field == \"duration_seconds\")\n  |> aggregateWindow(every: 1d, fn: count, createEmpty: false)", "refId": "A" }],
+      "title": "Daily phone unlocks",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "influxdb", "uid": "sleep-influxdb" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 16, "x": 8, "y": 14 },
+      "id": 7,
+      "options": { "legend": { "calcs": [], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [{ "query": "from(bucket: \"${INFLUXDB_BUCKET}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"activity_event\" and r._field == \"duration_seconds\")\n  |> filter(fn: (r) => r.bucket_type != \"os.lockscreen.unlocks\")\n  |> aggregateWindow(every: v.windowPeriod, fn: sum, createEmpty: false)", "refId": "A" }],
+      "title": "ActivityWatch activity density",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 41,
+  "tags": ["sleep", "activitywatch", "home-assistant"],
+  "templating": {
+    "list": [
+      { "current": { "text": "sleep", "value": "sleep" }, "hide": 2, "label": "InfluxDB bucket", "name": "INFLUXDB_BUCKET", "query": "sleep", "skipUrlSync": true, "type": "constant" },
+      { "current": { "text": "(?i)(sleep|slept|nap)", "value": "(?i)(sleep|slept|nap)" }, "hide": 0, "label": "Sleep title regex", "name": "sleep_pattern", "options": [{ "selected": true, "text": "(?i)(sleep|slept|nap)", "value": "(?i)(sleep|slept|nap)" }], "query": "(?i)(sleep|slept|nap)", "type": "textbox" },
+      { "allValue": ".*", "current": { "text": "All", "value": "$__all" }, "datasource": { "type": "influxdb", "uid": "sleep-influxdb" }, "definition": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"${INFLUXDB_BUCKET}\", tag: \"entity_id\", predicate: (r) => r._measurement == \"home_assistant_state\")", "includeAll": true, "label": "HA entity", "multi": true, "name": "ha_entity", "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"${INFLUXDB_BUCKET}\", tag: \"entity_id\", predicate: (r) => r._measurement == \"home_assistant_state\")", "refresh": 1, "type": "query" }
+    ]
+  },
+  "time": { "from": "now-14d", "to": "now" },
+  "timezone": "browser",
+  "title": "Sleep and Activity Overview",
+  "uid": "sleep-activity-overview",
+  "version": 1
+}
