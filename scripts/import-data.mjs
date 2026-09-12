@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { importActivityWatch, importHomeAssistant, importIcs } from "./lib/importers.mjs";
+import { importActivityWatch, importIcs } from "./lib/importers.mjs";
 
 if (fs.existsSync(".env")) {
   for (const line of fs.readFileSync(".env", "utf8").split(/\r?\n/)) {
@@ -23,18 +23,18 @@ function required(name) {
 }
 
 function date(value, fallback) {
-  const result = new Date(value ?? fallback);
+  const result = new Date(value || fallback);
   if (!Number.isFinite(result.getTime())) throw new Error(`Invalid date: ${value}`);
   return result;
 }
 
 const command = process.argv[2] ?? "all";
-if (!["all", "ics", "ha", "activitywatch"].includes(command)) {
-  throw new Error("Usage: npm run import -- [all|ics|ha|activitywatch]");
+if (!["all", "ics", "activitywatch"].includes(command)) {
+  throw new Error("Usage: npm run import -- [all|ics|activitywatch]");
 }
 
 const end = date(process.env.IMPORT_END, Date.now());
-const start = date(process.env.IMPORT_START, end.getTime() - 30 * 86_400_000);
+const start = date(process.env.IMPORT_START, "1970-01-01T00:00:00Z");
 const influxVersion = process.env.INFLUXDB_VERSION ?? (process.env.INFLUXDB_USERNAME ? "1" : "2");
 if (!["1", "2"].includes(influxVersion)) throw new Error("INFLUXDB_VERSION must be 1 or 2");
 const influx = {
@@ -70,21 +70,6 @@ if (command === "all" || command === "ics") {
   }));
 }
 
-if (command === "all" || command === "ha") {
-  const entityIds = list(process.env.HA_ENTITY_IDS);
-  const homeAssistantUrl = process.env.HA_URL ?? process.env.HOME_ASSISTANT_URL;
-  const homeAssistantToken = process.env.HA_TOKEN ?? process.env.HOME_ASSISTANT_TOKEN;
-  await run("Home Assistant", Boolean(homeAssistantUrl && homeAssistantToken && entityIds.length), () => importHomeAssistant({
-    url: homeAssistantUrl,
-    token: homeAssistantToken,
-    entityIds,
-    start,
-    end,
-    chunkDays: Number(process.env.HA_CHUNK_DAYS ?? 7),
-    influx,
-  }));
-}
-
 if (command === "all" || command === "activitywatch") {
   const exportPath = process.env.AW_EXPORT_PATH;
   await run("ActivityWatch", Boolean(exportPath), () => importActivityWatch({
@@ -93,6 +78,10 @@ if (command === "all" || command === "activitywatch") {
     end,
     mergeGapSeconds: Number(process.env.AW_MERGE_GAP_SECONDS ?? 5),
     minDurationSeconds: Number(process.env.AW_MIN_DURATION_SECONDS ?? 0.5),
+    smooth: process.env.AW_SMOOTH !== "false",
     influx,
+    onFileImported: ({ file, index, total, count }) => {
+      console.log(`ActivityWatch [${index}/${total}] ${path.basename(file)}: wrote ${count} points`);
+    },
   }));
 }

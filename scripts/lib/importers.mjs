@@ -1,7 +1,41 @@
 import fs from "node:fs/promises";
+import http from "node:http";
+import https from "node:https";
+import path from "node:path";
 import ical from "ical";
 
 const NS_PER_MS = 1_000_000n;
+const HTTP_AGENTS = {
+  "http:": new http.Agent({ keepAlive: true, maxSockets: 2 }),
+  "https:": new https.Agent({ keepAlive: true, maxSockets: 2 }),
+};
+
+function http1Request(url, options) {
+  return new Promise((resolve, reject) => {
+    const client = url.protocol === "https:" ? https : http;
+    const request = client.request(url, {
+      method: options.method,
+      headers: {
+        ...options.headers,
+        "Content-Length": Buffer.byteLength(options.body),
+      },
+      agent: HTTP_AGENTS[url.protocol],
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        resolve({
+          ok: response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode,
+          text: async () => body,
+        });
+      });
+    });
+    request.on("error", reject);
+    request.end(options.body);
+  });
+}
 
 function timestampNs(value) {
   const ms = new Date(value).getTime();
@@ -21,12 +55,16 @@ function stringField(value) {
   return `"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n").replaceAll("\r", "\\r")}"`;
 }
 
-export function lineProtocol(measurement, tags, fields, timestamp) {
+function seriesKey(measurement, tags) {
   const tagSet = Object.entries(tags)
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${escapeTag(key)}=${escapeTag(value)}`)
     .join(",");
+  return `${escapeMeasurement(measurement)}${tagSet ? `,${tagSet}` : ""}`;
+}
+
+export function lineProtocol(measurement, tags, fields, timestamp) {
   const fieldSet = Object.entries(fields)
     .filter(([, value]) => value !== undefined && value !== null && !(typeof value === "number" && !Number.isFinite(value)))
     .sort(([a], [b]) => a.localeCompare(b))
@@ -38,12 +76,32 @@ export function lineProtocol(measurement, tags, fields, timestamp) {
     })
     .join(",");
   if (!fieldSet) throw new Error(`Point for ${measurement} has no fields`);
-  return `${escapeMeasurement(measurement)}${tagSet ? `,${tagSet}` : ""} ${fieldSet} ${timestampNs(timestamp)}`;
+  return `${seriesKey(measurement, tags)} ${fieldSet} ${timestampNs(timestamp)}`;
 }
 
-export async function writeLines(lines, config, fetchImpl = fetch) {
+function disambiguatePointLines(points) {
+  const groups = new Map();
+  for (const point of points) {
+    if (!groups.has(point.key)) groups.set(point.key, new Map());
+    groups.get(point.key).set(point.line, point);
+  }
+  const lines = [];
+  for (const uniquePoints of groups.values()) {
+    const group = [...uniquePoints.values()].sort((a, b) => a.line.localeCompare(b.line));
+    if (group.length >= Number(NS_PER_MS)) throw new Error(`Too many events share one InfluxDB point key: ${group.length}`);
+    for (const [index, point] of group.entries()) {
+      const timestamp = (point.timestamp + BigInt(index)).toString();
+      lines.push(`${point.line.slice(0, point.line.lastIndexOf(" ") + 1)}${timestamp}`);
+    }
+  }
+  return lines;
+}
+
+export async function writeLines(lines, config, fetchImpl = http1Request) {
   if (lines.length === 0) return 0;
   const batchSize = config.batchSize ?? 5_000;
+  const retryAttempts = config.retryAttempts ?? 5;
+  const retryDelayMs = config.retryDelayMs ?? 1_000;
   for (let offset = 0; offset < lines.length; offset += batchSize) {
     const batch = lines.slice(offset, offset + batchSize);
     const influxV1 = config.version === "1";
@@ -55,7 +113,7 @@ export async function writeLines(lines, config, fetchImpl = fetch) {
       url.searchParams.set("bucket", config.bucket);
     }
     url.searchParams.set("precision", "ns");
-    const response = await fetchImpl(url, {
+    const request = {
       method: "POST",
       headers: {
         Authorization: influxV1
@@ -64,8 +122,30 @@ export async function writeLines(lines, config, fetchImpl = fetch) {
         "Content-Type": "text/plain; charset=utf-8",
       },
       body: batch.join("\n"),
-    });
-    if (!response.ok) throw new Error(`InfluxDB write failed (${response.status}): ${await response.text()}`);
+    };
+    for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
+      let response;
+      try {
+        response = await fetchImpl(url, request);
+      } catch (error) {
+        if (attempt === retryAttempts) {
+          throw new Error(`InfluxDB write failed after ${retryAttempts} attempts: ${error.message}`, { cause: error });
+        }
+        const delay = retryDelayMs * 2 ** (attempt - 1);
+        console.warn(`InfluxDB write attempt ${attempt}/${retryAttempts} failed; retrying in ${delay} ms`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+      if (response.ok) break;
+      const responseBody = await response.text();
+      const retryable = response.status === 429 || response.status >= 500;
+      if (!retryable || attempt === retryAttempts) {
+        throw new Error(`InfluxDB write failed (${response.status}): ${responseBody}`);
+      }
+      const delay = retryDelayMs * 2 ** (attempt - 1);
+      console.warn(`InfluxDB write returned ${response.status} on attempt ${attempt}/${retryAttempts}; retrying in ${delay} ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
   }
   return lines.length;
 }
@@ -90,8 +170,16 @@ function eventOccurrences(event, start, end) {
   }));
 }
 
-export async function importIcs({ sources, start, end, titlePattern, influx, fetchImpl = fetch }) {
-  const lines = [];
+export async function importIcs({
+  sources,
+  start,
+  end,
+  titlePattern,
+  influx,
+  fetchImpl = fetch,
+  writeImpl = fetchImpl === fetch ? undefined : fetchImpl,
+}) {
+  const points = [];
   for (const source of sources) {
     const calendar = ical.parseICS(await readSource(source, fetchImpl));
     for (const event of Object.values(calendar)) {
@@ -99,63 +187,25 @@ export async function importIcs({ sources, start, end, titlePattern, influx, fet
       const title = String(event.summary ?? "(untitled)");
       if (titlePattern && !titlePattern.test(title)) continue;
       for (const occurrence of eventOccurrences(event, start, end)) {
-        lines.push(lineProtocol("calendar_event", { calendar: event.organizer?.params?.CN ?? "default" }, {
+        const tags = { calendar: event.organizer?.params?.CN ?? "default" };
+        const fields = {
           title,
           uid: String(event.uid ?? ""),
           end_time: occurrence.end.toISOString(),
           duration_seconds: (occurrence.end.getTime() - occurrence.start.getTime()) / 1_000,
           all_day: event.datetype === "date",
           location: String(event.location ?? ""),
-        }, occurrence.start));
-      }
-    }
-  }
-  return writeLines([...new Set(lines)], influx, fetchImpl);
-}
-
-function stateKey(state) {
-  return `${state.entity_id}\u0000${state.last_updated ?? state.last_changed}`;
-}
-
-export async function fetchHomeAssistantHistory({ url, token, entityIds, start, end, chunkDays = 7, fetchImpl = fetch }) {
-  const states = new Map();
-  const chunkMs = chunkDays * 86_400_000;
-  for (let cursor = start.getTime(); cursor < end.getTime(); cursor += chunkMs) {
-    const chunkEnd = new Date(Math.min(cursor + chunkMs, end.getTime()));
-    const endpoint = new URL(`/api/history/period/${encodeURIComponent(new Date(cursor).toISOString())}`, url);
-    endpoint.searchParams.set("end_time", chunkEnd.toISOString());
-    endpoint.searchParams.set("filter_entity_id", entityIds.join(","));
-    endpoint.searchParams.set("minimal_response", "");
-    endpoint.searchParams.set("no_attributes", "");
-    const response = await fetchImpl(endpoint, { headers: { Authorization: `Bearer ${token}` } });
-    if (!response.ok) throw new Error(`Home Assistant history failed (${response.status}): ${await response.text()}`);
-    for (const history of await response.json()) {
-      const entityId = history.find((state) => state.entity_id)?.entity_id;
-      for (const state of history) {
-        const completeState = {
-          ...state,
-          entity_id: state.entity_id ?? entityId,
-          last_updated: state.last_updated ?? state.last_changed,
         };
-        if (completeState.entity_id) states.set(stateKey(completeState), completeState);
+        const timestamp = BigInt(occurrence.start.getTime()) * NS_PER_MS;
+        points.push({
+          key: `${seriesKey("calendar_event", tags)}\u0000${timestamp}`,
+          line: lineProtocol("calendar_event", tags, fields, occurrence.start),
+          timestamp,
+        });
       }
     }
   }
-  return [...states.values()];
-}
-
-export async function importHomeAssistant(options) {
-  const states = await fetchHomeAssistantHistory(options);
-  const lines = states.map((state) => {
-    const numeric = Number(state.state);
-    return lineProtocol("home_assistant_state", { entity_id: state.entity_id }, {
-      state: String(state.state),
-      numeric_value: Number.isFinite(numeric) ? numeric : undefined,
-      last_changed: String(state.last_changed ?? ""),
-      attributes_json: JSON.stringify(state.attributes ?? {}),
-    }, state.last_updated ?? state.last_changed);
-  });
-  return writeLines(lines, options.influx, options.fetchImpl);
+  return writeLines(disambiguatePointLines(points), influx, writeImpl);
 }
 
 function activityIdentity(event) {
@@ -194,32 +244,81 @@ function hostnameFromUrl(value) {
   try { return new URL(value).hostname; } catch { return ""; }
 }
 
-export async function importActivityWatch({ path, start, end, mergeGapSeconds, minDurationSeconds, influx, fetchImpl = fetch }) {
-  const exportData = JSON.parse(await fs.readFile(path, "utf8"));
-  const lines = [];
-  for (const bucket of Object.values(exportData.buckets ?? {})) {
-    const eventsInRange = (bucket.events ?? []).filter((event) => {
-      const timestamp = new Date(event.timestamp).getTime();
-      return timestamp >= start.getTime() && timestamp <= end.getTime();
-    });
-    const events = smoothActivityEvents(eventsInRange, bucket.type, { mergeGapSeconds, minDurationSeconds });
-    for (const event of events) {
-      const start = new Date(event.timestamp);
-      const duration = Number(event.duration) || 0;
-      lines.push(lineProtocol("activity_event", {
-        bucket_id: bucket.id,
-        bucket_type: bucket.type,
-        hostname: bucket.hostname,
-        app: event.data?.app ?? undefined,
-        domain: hostnameFromUrl(event.data?.url),
-      }, {
-        duration_seconds: duration,
-        end_time: new Date(start.getTime() + duration * 1_000).toISOString(),
-        title: String(event.data?.title ?? ""),
-        package: String(event.data?.package ?? ""),
-        data_json: JSON.stringify(event.data ?? {}),
-      }, start));
-    }
+async function activityWatchFiles(sourcePath) {
+  const stat = await fs.stat(sourcePath);
+  if (stat.isFile()) return [sourcePath];
+  if (!stat.isDirectory()) throw new Error(`ActivityWatch source is not a file or directory: ${sourcePath}`);
+  const files = [];
+  for (const entry of await fs.readdir(sourcePath, { withFileTypes: true })) {
+    const entryPath = path.join(sourcePath, entry.name);
+    if (entry.isDirectory()) files.push(...await activityWatchFiles(entryPath));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) files.push(entryPath);
   }
-  return writeLines(lines, influx, fetchImpl);
+  return files.sort();
+}
+
+export async function importActivityWatch({
+  path: sourcePath,
+  start,
+  end,
+  mergeGapSeconds,
+  minDurationSeconds,
+  smooth = true,
+  influx,
+  fetchImpl,
+  onFileImported,
+}) {
+  const files = await activityWatchFiles(sourcePath);
+  if (files.length === 0) throw new Error(`No ActivityWatch JSON files found under ${sourcePath}`);
+  let totalCount = 0;
+  for (const [index, file] of files.entries()) {
+    let exportData;
+    try {
+      exportData = JSON.parse(await fs.readFile(file, "utf8"));
+    } catch (error) {
+      throw new Error(`Cannot parse ActivityWatch export ${file}: ${error.message}`, { cause: error });
+    }
+    if (!exportData?.buckets || typeof exportData.buckets !== "object" || Array.isArray(exportData.buckets)) {
+      throw new Error(`Missing ActivityWatch buckets object in ${file}`);
+    }
+    const points = [];
+    for (const bucket of Object.values(exportData.buckets)) {
+      const eventsInRange = (bucket.events ?? []).filter((event) => {
+        const timestamp = new Date(event.timestamp).getTime();
+        return timestamp >= start.getTime() && timestamp <= end.getTime();
+      });
+      const events = smooth
+        ? smoothActivityEvents(eventsInRange, bucket.type, { mergeGapSeconds, minDurationSeconds })
+        : eventsInRange;
+      for (const event of events) {
+        const eventStart = new Date(event.timestamp);
+        const duration = Number(event.duration) || 0;
+        const tags = {
+          bucket_id: bucket.id,
+          bucket_type: bucket.type,
+          hostname: bucket.hostname,
+          app: event.data?.app ?? undefined,
+          domain: hostnameFromUrl(event.data?.url),
+        };
+        const fields = {
+          duration_seconds: duration,
+          end_time: new Date(eventStart.getTime() + duration * 1_000).toISOString(),
+          title: String(event.data?.title ?? ""),
+          package: String(event.data?.package ?? ""),
+          data_json: JSON.stringify(event.data ?? {}),
+        };
+        const timestamp = BigInt(eventStart.getTime()) * NS_PER_MS;
+        points.push({
+          key: `${seriesKey("activity_event", tags)}\u0000${timestamp}`,
+          line: lineProtocol("activity_event", tags, fields, eventStart),
+          timestamp,
+        });
+      }
+    }
+    const lines = disambiguatePointLines(points);
+    const count = await writeLines(lines, influx, fetchImpl);
+    totalCount += count;
+    onFileImported?.({ file, index: index + 1, total: files.length, count });
+  }
+  return totalCount;
 }

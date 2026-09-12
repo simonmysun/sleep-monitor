@@ -120,8 +120,8 @@ docker compose up --build
 
 ## InfluxDB and Grafana
 
-The repository includes a development data stack and an importer for calendar,
-Home Assistant, and ActivityWatch data. Credentials are read from `.env`; real
+The repository includes a development data stack and an importer for calendar
+and ActivityWatch data. Credentials are read from `.env`; real
 tokens must not be committed.
 
 ### Start the development stack
@@ -151,24 +151,17 @@ The importer loads `.env` automatically. Important settings are:
 | `INFLUXDB_URL` | InfluxDB base URL |
 | `INFLUXDB_ORG`, `INFLUXDB_BUCKET`, `INFLUXDB_TOKEN` | InfluxDB 2.x destination and token |
 | `INFLUXDB_DATABASE`, `INFLUXDB_USERNAME`, `INFLUXDB_PASSWORD` | InfluxDB 1.x destination and credentials |
-| `IMPORT_START`, `IMPORT_END` | Shared import range; defaults to the last 30 days |
+| `IMPORT_START`, `IMPORT_END` | Shared import range; defaults to all history through now |
 | `ICS_SOURCES` | Comma-separated ICS file paths or HTTP(S) URLs |
 | `ICS_TITLE_PATTERN` | Optional case-insensitive event-title regular expression |
-| `HA_URL`, `HA_TOKEN` | Home Assistant base URL and long-lived access token |
-| `HA_ENTITY_IDS` | Comma-separated entity IDs whose history should be imported |
-| `HA_CHUNK_DAYS` | HA history request chunk size, default `7` days |
-| `AW_EXPORT_PATH` | ActivityWatch bucket export JSON path |
+| `AW_EXPORT_PATH` | ActivityWatch export JSON file or directory; directories are read recursively in filename order |
+| `AW_SMOOTH` | Set to `false` for exports already deduplicated and merged by `merge-exports.mjs` |
 | `AW_MERGE_GAP_SECONDS` | Merge gap for adjacent identical activity, default `5` seconds |
 | `AW_MIN_DURATION_SECONDS` | Discard shorter non-instant activity fragments, default `0.5` seconds |
 
-The provided Home Assistant token belongs in local `.env` as `HA_TOKEN`. Entity
-IDs can be copied from Home Assistant's Developer Tools > States page. Do not
-put the token directly in scripts or Compose YAML.
-
-The production Home Assistant streams all state changes directly to the
-`home_assistant` InfluxDB database. Keep the HA importer unconfigured for normal
-one-command imports; it remains available for API-based backfills or other Home
-Assistant instances.
+The production Home Assistant streams state changes directly to its dedicated
+InfluxDB database. Historical backfills are operational tasks and are not part
+of this importer.
 
 ### Import data
 
@@ -178,7 +171,6 @@ npm run import
 
 # Or import one source and fail if its settings are incomplete.
 npm run import -- ics
-npm run import -- ha
 npm run import -- activitywatch
 ```
 
@@ -187,7 +179,6 @@ Measurements written to the configured bucket:
 | Measurement | Contents |
 |---|---|
 | `calendar_event` | Title, start/end, duration, location, and UID |
-| `home_assistant_state` | Entity state, numeric value when available, and timestamps |
 | `activity_event` | Smoothed activity intervals, app/domain, duration, and original data JSON |
 
 Imports are idempotent because each point uses stable source tags and its
